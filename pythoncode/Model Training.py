@@ -1,15 +1,17 @@
-# ===================================================================
-# FULL ANN TRAINING SCRIPT — AUTO-DETECT LABEL + AUTO ENCODE STRINGS
-# ===================================================================
+# ============================================================================
+# FINAL ANN TRAINING SCRIPT — IMPUTATION + SMOTE + NORMALIZATION + AUTO ENCODING
+# ============================================================================
 
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
-from sklearn.preprocessing import LabelEncoder
+from sklearn.impute import SimpleImputer
+from imblearn.over_sampling import SMOTE
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense
+from tensorflow.keras.layers import Dense, Dropout, Input
 from tensorflow.keras.callbacks import EarlyStopping
 
 # --------------------------------------------------------------
@@ -31,20 +33,18 @@ for col in data.columns:
         label_col = col
         break
 
-# fallback: use last column
 if label_col is None:
     label_col = data.columns[-1]
 
 print("Detected label column:", label_col)
 
 # --------------------------------------------------------------
-# 3. AUTO-ENCODE ALL STRING COLUMNS
+# 3. ENCODE STRING COLUMNS
 # --------------------------------------------------------------
 
 le = LabelEncoder()
-
 for col in data.columns:
-    if data[col].dtype == "object":     # if column contains text
+    if data[col].dtype == "object":
         print(f"Encoding column: {col}")
         data[col] = le.fit_transform(data[col].astype(str))
 
@@ -56,26 +56,54 @@ X = data.drop(label_col, axis=1)
 y = data[label_col]
 
 # --------------------------------------------------------------
-# 5. TRAIN-TEST SPLIT
+# 5. HANDLE MISSING VALUES (IMPUTATION)
+# --------------------------------------------------------------
+
+print("\nChecking missing values before imputation:")
+print(X.isna().sum())
+
+imputer = SimpleImputer(strategy="mean")
+X_imputed = imputer.fit_transform(X)
+
+# --------------------------------------------------------------
+# 6. SMOTE OVERSAMPLING
+# --------------------------------------------------------------
+
+print("\nBefore SMOTE distribution:", np.bincount(y))
+
+sm = SMOTE(random_state=42)
+X_resampled, y_resampled = sm.fit_resample(X_imputed, y)
+
+print("After SMOTE distribution:", np.bincount(y_resampled))
+
+# --------------------------------------------------------------
+# 7. NORMALIZATION
+# --------------------------------------------------------------
+
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X_resampled)
+
+# --------------------------------------------------------------
+# 8. TRAIN-TEST SPLIT
 # --------------------------------------------------------------
 
 X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.2, random_state=42, stratify=y
+    X_scaled, y_resampled, test_size=0.2, random_state=42, stratify=y_resampled
 )
 
 # --------------------------------------------------------------
-# 6. BUILD MODEL
+# 9. MODEL
 # --------------------------------------------------------------
 
 model = Sequential([
-    Dense(16, activation='relu', input_shape=(X_train.shape[1],)),
+    Input(shape=(X_train.shape[1],)),
+    Dense(32, activation='relu'),
+    Dropout(0.2),
+    Dense(16, activation='relu'),
+    Dropout(0.1),
     Dense(8, activation='relu'),
     Dense(1, activation='sigmoid')
 ])
-
-# --------------------------------------------------------------
-# 7. COMPILE MODEL
-# --------------------------------------------------------------
 
 model.compile(
     optimizer="adam",
@@ -84,7 +112,7 @@ model.compile(
 )
 
 # --------------------------------------------------------------
-# 8. TRAIN MODEL
+# 10. TRAINING
 # --------------------------------------------------------------
 
 es = EarlyStopping(
@@ -103,7 +131,7 @@ history = model.fit(
 )
 
 # --------------------------------------------------------------
-# 9. PLOT TRAINING CURVES
+# 11. PLOTS
 # --------------------------------------------------------------
 
 plt.figure(figsize=(8,5))
@@ -125,13 +153,13 @@ plt.legend()
 plt.show()
 
 # --------------------------------------------------------------
-# 10. EVALUATE MODEL
+# 12. EVALUATION
 # --------------------------------------------------------------
 
 y_pred = (model.predict(X_test) > 0.5).astype("int32")
 
 print("===================================================")
-print("               FINAL MODEL RESULTS")
+print("                  FINAL MODEL RESULTS")
 print("===================================================")
 print("Accuracy:", accuracy_score(y_test, y_pred))
 print("\nConfusion Matrix:\n", confusion_matrix(y_test, y_pred))
