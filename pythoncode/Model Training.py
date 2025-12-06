@@ -1,166 +1,173 @@
-# ============================================================================
-# FINAL ANN TRAINING SCRIPT — IMPUTATION + SMOTE + NORMALIZATION + AUTO ENCODING
-# ============================================================================
-
-import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
+import numpy as np
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
-from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import StandardScaler
 from imblearn.over_sampling import SMOTE
+
+import tensorflow as tf
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense, Dropout, Input
-from tensorflow.keras.callbacks import EarlyStopping
+from tensorflow.keras.layers import Dense, Input
 
-# --------------------------------------------------------------
-# 1. LOAD DATA
-# --------------------------------------------------------------
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.metrics import roc_curve, auc
 
-data = pd.read_csv("heart_disease.csv")
-print("Loaded CSV columns:", data.columns.tolist())
 
-# --------------------------------------------------------------
-# 2. AUTO-DETECT LABEL COLUMN
-# --------------------------------------------------------------
+# ======================================================
+# 1. LOAD CLEANED DATA
+# ======================================================
+df = pd.read_csv("cleaned_heart_disease.csv")
+print("Loaded cleaned CSV columns:", df.columns.tolist())
 
-possible_labels = ["target", "output", "num", "diagnosis", "class", "heart disease status"]
 
-label_col = None
-for col in data.columns:
-    if col.lower() in possible_labels:
-        label_col = col
-        break
+# ======================================================
+# 2. IDENTIFY LABEL COLUMN
+# ======================================================
+label_col = "Heart Disease Status"
+y = df[label_col]
+X = df.drop(label_col, axis=1)
 
-if label_col is None:
-    label_col = data.columns[-1]
 
-print("Detected label column:", label_col)
+# ======================================================
+# 3. ENCODE CATEGORICAL COLUMNS
+# ======================================================
+categorical_cols = X.select_dtypes(include=['object']).columns.tolist()
+print("Categorical columns detected:", categorical_cols)
 
-# --------------------------------------------------------------
-# 3. ENCODE STRING COLUMNS
-# --------------------------------------------------------------
+for col in categorical_cols:
+    print("Encoding column:", col)
+    le = LabelEncoder()
+    X[col] = le.fit_transform(X[col].astype(str))
 
-le = LabelEncoder()
-for col in data.columns:
-    if data[col].dtype == "object":
-        print(f"Encoding column: {col}")
-        data[col] = le.fit_transform(data[col].astype(str))
+# Encode label if it is still string
+if y.dtype == "object":
+    y = LabelEncoder().fit_transform(y.astype(str))
 
-# --------------------------------------------------------------
-# 4. SPLIT FEATURES + LABEL
-# --------------------------------------------------------------
 
-X = data.drop(label_col, axis=1)
-y = data[label_col]
-
-# --------------------------------------------------------------
-# 5. HANDLE MISSING VALUES (IMPUTATION)
-# --------------------------------------------------------------
-
-print("\nChecking missing values before imputation:")
-print(X.isna().sum())
-
-imputer = SimpleImputer(strategy="mean")
-X_imputed = imputer.fit_transform(X)
-
-# --------------------------------------------------------------
-# 6. SMOTE OVERSAMPLING
-# --------------------------------------------------------------
-
+# ======================================================
+# 4. APPLY SMOTE TO BALANCE DATA
+# ======================================================
 print("\nBefore SMOTE distribution:", np.bincount(y))
 
 sm = SMOTE(random_state=42)
-X_resampled, y_resampled = sm.fit_resample(X_imputed, y)
+X_resampled, y_resampled = sm.fit_resample(X, y)
 
 print("After SMOTE distribution:", np.bincount(y_resampled))
 
-# --------------------------------------------------------------
-# 7. NORMALIZATION
-# --------------------------------------------------------------
 
-scaler = StandardScaler()
-X_scaled = scaler.fit_transform(X_resampled)
-
-# --------------------------------------------------------------
-# 8. TRAIN-TEST SPLIT
-# --------------------------------------------------------------
-
+# ======================================================
+# 5. TRAIN/TEST SPLIT
+# ======================================================
 X_train, X_test, y_train, y_test = train_test_split(
-    X_scaled, y_resampled, test_size=0.2, random_state=42, stratify=y_resampled
+    X_resampled, y_resampled, test_size=0.20, random_state=42
 )
 
-# --------------------------------------------------------------
-# 9. MODEL
-# --------------------------------------------------------------
 
+# ======================================================
+# 6. BUILD ANN MODEL
+# ======================================================
 model = Sequential([
     Input(shape=(X_train.shape[1],)),
     Dense(32, activation='relu'),
-    Dropout(0.2),
     Dense(16, activation='relu'),
-    Dropout(0.1),
-    Dense(8, activation='relu'),
     Dense(1, activation='sigmoid')
 ])
 
 model.compile(
-    optimizer="adam",
-    loss="binary_crossentropy",
-    metrics=["accuracy"]
+    optimizer='adam',
+    loss='binary_crossentropy',
+    metrics=['accuracy']
 )
 
-# --------------------------------------------------------------
-# 10. TRAINING
-# --------------------------------------------------------------
 
-es = EarlyStopping(
-    monitor='val_loss',
-    patience=10,
-    restore_best_weights=True
-)
-
+# ======================================================
+# 7. TRAIN MODEL
+# ======================================================
 history = model.fit(
     X_train, y_train,
-    validation_split=0.2,
-    epochs=200,
+    validation_split=0.20,
+    epochs=80,
     batch_size=32,
-    callbacks=[es],
     verbose=1
 )
 
-# --------------------------------------------------------------
-# 11. PLOTS
-# --------------------------------------------------------------
 
+# ======================================================
+# 8. EVALUATE MODEL
+# ======================================================
+pred_probs = model.predict(X_test)
+pred_classes = (pred_probs > 0.5).astype(int)
+
+acc = accuracy_score(y_test, pred_classes)
+cm = confusion_matrix(y_test, pred_classes)
+cr = classification_report(y_test, pred_classes)
+
+print("\n===================================================")
+print("                FINAL MODEL RESULTS")
+print("===================================================")
+print("Accuracy:", acc)
+print("\nConfusion Matrix:\n", cm)
+print("\nClassification Report:\n", cr)
+
+
+# ======================================================
+# 9. GENERATE ALL REQUIRED GRAPHS
+# ======================================================
+
+# --------------------------
+# ACCURACY GRAPH
+# --------------------------
 plt.figure(figsize=(8,5))
-plt.plot(history.history['accuracy'], label="Training Accuracy")
-plt.plot(history.history['val_accuracy'], label="Validation Accuracy")
-plt.title("Accuracy Curve")
+plt.plot(history.history['accuracy'], label='Training Accuracy')
+plt.plot(history.history['val_accuracy'], label='Validation Accuracy')
+plt.title("Training vs Validation Accuracy")
 plt.xlabel("Epoch")
 plt.ylabel("Accuracy")
 plt.legend()
+plt.grid(True)
 plt.show()
 
+
+# --------------------------
+# LOSS GRAPH
+# --------------------------
 plt.figure(figsize=(8,5))
-plt.plot(history.history['loss'], label="Training Loss")
-plt.plot(history.history['val_loss'], label="Validation Loss")
-plt.title("Loss Curve")
+plt.plot(history.history['loss'], label='Training Loss')
+plt.plot(history.history['val_loss'], label='Validation Loss')
+plt.title("Training vs Validation Loss")
 plt.xlabel("Epoch")
 plt.ylabel("Loss")
 plt.legend()
+plt.grid(True)
 plt.show()
 
-# --------------------------------------------------------------
-# 12. EVALUATION
-# --------------------------------------------------------------
 
-y_pred = (model.predict(X_test) > 0.5).astype("int32")
+# --------------------------
+# CONFUSION MATRIX HEATMAP
+# --------------------------
+plt.figure(figsize=(6,5))
+sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
+plt.title("Confusion Matrix")
+plt.xlabel("Predicted")
+plt.ylabel("Actual")
+plt.show()
 
-print("===================================================")
-print("                  FINAL MODEL RESULTS")
-print("===================================================")
-print("Accuracy:", accuracy_score(y_test, y_pred))
-print("\nConfusion Matrix:\n", confusion_matrix(y_test, y_pred))
-print("\nClassification Report:\n", classification_report(y_test, y_pred))
+
+# --------------------------
+# ROC CURVE
+# --------------------------
+y_probs = model.predict(X_test).ravel()
+fpr, tpr, thresholds = roc_curve(y_test, y_probs)
+roc_auc = auc(fpr, tpr)
+
+plt.figure(figsize=(7,5))
+plt.plot(fpr, tpr, label=f"AUC = {roc_auc:.3f}")
+plt.plot([0,1], [0,1], linestyle='--')
+plt.title("ROC Curve")
+plt.xlabel("False Positive Rate")
+plt.ylabel("True Positive Rate")
+plt.legend()
+plt.grid(True)
+plt.show()
